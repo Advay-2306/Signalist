@@ -1,17 +1,18 @@
 "use client";
+import { useForm } from "react-hook-form";
+import { Button } from "@/components/ui/button";
 import { CountrySelectField } from "@/components/forms/CountrySelectField";
 import FooterLink from "@/components/forms/FooterLink";
 import InputField from "@/components/forms/InputField";
 import SelectField from "@/components/forms/SelectField";
-import { Button } from "@/components/ui/button";
-import {
-  INVESTMENT_GOALS,
-  PREFERRED_INDUSTRIES,
-  RISK_TOLERANCE_OPTIONS,
-} from "@/lib/constants";
-import { useForm } from "react-hook-form";
+import { signUpWithEmail } from "@/lib/actions/auth.actions";
+import { INVESTMENT_GOALS, PREFERRED_INDUSTRIES, RISK_TOLERANCE_OPTIONS } from "@/lib/constants";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 const SignUp = () => {
+  const router = useRouter();
+
   const {
     register,
     handleSubmit,
@@ -32,9 +33,14 @@ const SignUp = () => {
 
   const onSubmit = async (data: SignUpFormData) => {
     try {
-      console.log(data);
+      const result = await signUpWithEmail(data);
+      if (result.success) router.push("/");
     } catch (e) {
       console.error(e);
+      toast.error("Sign up failed", {
+        description:
+          e instanceof Error ? e.message : "Failed to create an account.",
+      });
     }
   };
   return (
@@ -54,15 +60,18 @@ const SignUp = () => {
         <InputField
           name="email"
           label="Email"
-          placeholder="e.g. johndoe@email.com"
+          placeholder="e.g. johndoe123@email.com"
           register={register}
           error={errors.email}
           validation={{
-            required: "Email name required",
-            pattern: /^\w+@\w+\.\w+$/,
-            message: "Email address required",
+            required: 'Email is required',
+            pattern: {
+              value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+              message: 'Please enter a valid email address',
+            },
           }}
         />
+
 
         <InputField
           name="password"
@@ -120,7 +129,11 @@ const SignUp = () => {
           {isSubmitting ? "Creating Account" : "Start Your Investing Journey"}
         </Button>
 
-        <FooterLink text="Already have an account?" linkText="Sign in" href="/sign-in" />
+        <FooterLink
+          text="Already have an account?"
+          linkText="Sign in"
+          href="/sign-in"
+        />
       </form>
     </>
   );
