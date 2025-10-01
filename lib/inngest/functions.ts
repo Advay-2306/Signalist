@@ -55,27 +55,35 @@ export const sendDailyNewsSummary = inngest.createFunction(
     // Step #1: Get all users for news delivery
     const users = await step.run('get-all-users', getAllUsersForNewsEmail)
 
-    if (!users || users.length === 0) return { success: false, message: 'No users found for news email' };
+    if (!users || users.length === 0) {
+      console.error('daily-news: No users retrieved for news email');
+      return { success: false, message: 'No users found for news email' };
+    }
 
     // Step #2: For each user, get watchlist symbols -> fetch news (fallback to general)
     const results = await step.run('fetch-user-news', async () => {
       const perUser: Array<{ user: User; articles: MarketNewsArticle[] }> = [];
-      for (const user of users as User[]) {
-        try {
-          const symbols = await getWatchlistSymbolsByEmail(user.email);
-          let articles = await getNews(symbols);
-          // Enforce max 6 articles per user
-          articles = (articles || []).slice(0, 6);
-          // If still empty, fallback to general
-          if (!articles || articles.length === 0) {
-            articles = await getNews();
-            articles = (articles || []).slice(0, 6);
-          }
-          perUser.push({ user, articles });
-        } catch (e) {
-          console.error('daily-news: error preparing user news', user.email, e);
-          perUser.push({ user, articles: [] });
-        }
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < users.length; i += BATCH_SIZE) {
+        const batch = users.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.all(
+          batch.map(async (user) => {
+            try {
+              const symbols = await getWatchlistSymbolsByEmail(user.email);
+              let articles = await getNews(symbols);
+              articles = (articles || []).slice(0, 6);
+              if (!articles || articles.length === 0) {
+                articles = await getNews();
+                articles = (articles || []).slice(0, 6);
+              }
+              return { user, articles };
+            } catch (e) {
+              console.error('daily-news: error preparing user news', user.email, e);
+              return { user, articles: [] };
+            }
+          })
+        );
+        perUser.push(...batchResults);
       }
       return perUser;
     });
@@ -83,25 +91,29 @@ export const sendDailyNewsSummary = inngest.createFunction(
     // Step #3: (placeholder) Summarize news via AI
     const userNewsSummaries: { user: User; newsContent: string | null }[] = [];
 
-    for (const { user, articles } of results) {
-      try {
-        const prompt = NEWS_SUMMARY_EMAIL_PROMPT.replace('{{newsData}}', JSON.stringify(articles, null, 2));
-
-        const response = await step.ai.infer(`summarize-news-${user.email}`, {
-          model: step.ai.models.gemini({ model: 'gemini-2.5-flash-lite' }),
-          body: {
-            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    const INFERENCE_BATCH = 10;
+    for (let i = 0; i < results.length; i += INFERENCE_BATCH) {
+      const batch = results.slice(i, i + INFERENCE_BATCH);
+      const summaries = await Promise.all(
+        batch.map(async ({ user, articles }) => {
+          try {
+            const prompt = NEWS_SUMMARY_EMAIL_PROMPT.replace('{{newsData}}', JSON.stringify(articles, null, 2));
+            const response = await step.ai.infer(`summarize-news-${user.email}`, {
+              model: step.ai.models.gemini({ model: 'gemini-2.5-flash-lite' }),
+              body: {
+                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+              }
+            });
+            const part = response.candidates?.[0]?.content?.parts?.[0];
+            const newsContent = (part && 'text' in part ? part.text : null) || 'No market news.';
+            return { user, newsContent };
+          } catch (e) {
+            console.error('Failed to summarize news for:', user.email);
+            return { user, newsContent: null };
           }
-        });
-
-        const part = response.candidates?.[0]?.content?.parts?.[0];
-        const newsContent = (part && 'text' in part ? part.text : null) || 'No market news.'
-
-        userNewsSummaries.push({ user, newsContent });
-      } catch (e) {
-        console.error('Failed to summarize news for : ', user.email);
-        userNewsSummaries.push({ user, newsContent: null });
-      }
+        })
+      );
+      userNewsSummaries.push(...summaries);
     }
 
     // Step #4: (placeholder) Send the emails
