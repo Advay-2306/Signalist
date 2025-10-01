@@ -98,9 +98,10 @@ export const formatArticle = (
 });
 
 export const formatChangePercent = (changePercent?: number) => {
-  if (!changePercent) return '';
-  const sign = changePercent > 0 ? '+' : '';
-  return `${sign}${changePercent.toFixed(2)}%`;
+  if (changePercent == null || !Number.isFinite(changePercent)) return '';
+  if (changePercent === 0) return '0.00%';
+  const sign = changePercent > 0 ? '+' : '-';
+  return `${sign}${Math.abs(changePercent).toFixed(2)}%`;
 };
 
 export const getChangeColorClass = (changePercent?: number) => {
